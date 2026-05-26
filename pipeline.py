@@ -37,6 +37,12 @@ def run():
     log.info("=" * 60)
 
     # ── Step 1: Validate Monday column structure ───────────────────────────────
+    # ── Connection test ──────────────────────────────────────────────────────
+    log.info("Step 0: Testing Supabase connection…")
+    if not supabase_client.test_connection():
+        log.error("Cannot reach Supabase — aborting. Check SUPABASE_URL and SUPABASE_KEY secrets.")
+        sys.exit(1)
+
     log.info("Step 1: Validating Monday.com board columns…")
     ok = monday_reader.validate_board_columns()
     if not ok:

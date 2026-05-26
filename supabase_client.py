@@ -50,11 +50,36 @@ def _parse_review_date(origin_description: str) -> Optional[str]:
     return None
 
 
-def _post(endpoint: str, payload, prefer: str = None) -> requests.Response:
+def test_connection() -> bool:
+    """Quick connectivity check — logs key prefix and HTTP status."""
+    key_preview = SUPABASE_KEY[:20] + "..." if SUPABASE_KEY else "MISSING"
+    log.info(f"Supabase URL : {BASE}")
+    log.info(f"Supabase key : {key_preview}")
+    try:
+        resp = requests.get(
+            f"{BASE}/products",
+            headers={**HEADERS, "Prefer": "return=representation"},
+            params={"limit": "1"},
+            timeout=10,
+        )
+        log.info(f"Supabase ping: HTTP {resp.status_code}")
+        if resp.status_code == 200:
+            return True
+        log.error(f"Supabase ping failed — body: {resp.text[:300]}")
+        return False
+    except Exception as e:
+        log.error(f"Supabase ping exception: {e}")
+        return False
+
+
+def _post(endpoint: str, payload, prefer: str = None, params: dict = None) -> requests.Response:
     hdrs = {**HEADERS}
     if prefer:
         hdrs["Prefer"] = prefer
-    resp = requests.post(f"{BASE}/{endpoint}", json=payload, headers=hdrs, timeout=20)
+    resp = requests.post(
+        f"{BASE}/{endpoint}", json=payload,
+        headers=hdrs, params=params, timeout=20
+    )
     resp.raise_for_status()
     return resp
 
@@ -100,11 +125,15 @@ def upsert_products(products: list[dict]) -> int:
             "updated_at":     _now_iso(),
         })
 
-    _post(
-        "products",
-        rows,
-        prefer="resolution=merge-duplicates,return=minimal",
-    )
+    # PostgREST upsert: conflict column specified via URL param
+    for i in range(0, len(rows), 100):
+        chunk = rows[i:i + 100]
+        _post(
+            "products",
+            chunk,
+            prefer="resolution=merge-duplicates,return=minimal",
+            params={"on_conflict": "asin"},
+        )
     log.info(f"Upserted {len(rows)} products")
     return len(rows)
 
