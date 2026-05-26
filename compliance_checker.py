@@ -173,6 +173,11 @@ def _call_groq(reviews: list[dict]) -> list[dict]:
 
             if resp.status_code == 429:
                 wait = int(resp.headers.get("Retry-After", 12))
+                # Cap at 30s — if Groq wants us to wait longer, daily limit is hit
+                # Better to skip remaining reviews than hang the pipeline for 30+ minutes
+                if wait > 30:
+                    log.warning(f"Groq daily limit hit (retry-after={wait}s) — skipping remaining reviews. Add CLAUDE_API_KEY to resolve.")
+                    return []
                 log.warning(f"Groq rate limit hit, waiting {wait}s…")
                 time.sleep(wait + 1)
                 continue
@@ -197,14 +202,17 @@ def _call_groq(reviews: list[dict]) -> list[dict]:
 def _call_llm(reviews: list[dict]) -> list[dict]:
     """
     Call LLM with automatic fallback.
-    Tries Claude first (higher limits), falls back to Groq.
+    Tries Claude first (higher limits), falls back to Groq only if Claude unavailable.
+    Groq free tier exhausts daily limits quickly — Claude is strongly preferred.
     """
     if CLAUDE_API_KEY:
         results = _call_claude(reviews)
         if results:
             return results
         log.warning("Claude failed, falling back to Groq…")
+        return _call_groq(reviews)
 
+    # Groq-only mode: cap wait time to avoid hanging the pipeline
     if GROQ_API_KEY:
         return _call_groq(reviews)
 
