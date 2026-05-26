@@ -1,27 +1,30 @@
 """
-compliance_checker.py — LLM-powered review TOS compliance analysis via Groq.
+compliance_checker.py — LLM-powered review TOS compliance analysis.
 
-Sends batches of 1-3 star reviews to Llama 3.3 70B.
+Primary: Claude API (claude-haiku-4-5) — fast, high limits on enterprise plans.
+Fallback: Groq (llama-3.3-70b-versatile) — free tier backup.
+
+Sends batches of reviews to the LLM.
 Returns structured violation results with type, reason, and confidence.
 Only flags genuine violations — not legitimate product complaints.
 """
 import json
 import logging
 import time
-from typing import Optional
 
 import requests
-from config import GROQ_API_KEY, GROQ_MODEL, COMPLIANCE_BATCH_SIZE, MIN_CONFIDENCE
+from config import (
+    GROQ_API_KEY, GROQ_MODEL,
+    CLAUDE_API_KEY, CLAUDE_MODEL,
+    COMPLIANCE_BATCH_SIZE, MIN_CONFIDENCE,
+)
 
 log = logging.getLogger(__name__)
 
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-HEADERS  = {
-    "Authorization": f"Bearer {GROQ_API_KEY}",
-    "Content-Type":  "application/json",
-}
+GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
+CLAUDE_URL = "https://api.anthropic.com/v1/messages"
 
-# ── System prompt (sent once per batch call) ──────────────────────────────────
+# ── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an Amazon review compliance analyst. Your job is to identify reviews that violate Amazon's Community Guidelines and should be reported for removal.
 
 VIOLATION TYPES (only flag if clearly applicable):
@@ -48,45 +51,125 @@ NEVER FLAG (these are legitimate reviews Amazon keeps):
 
 CRITICAL RULE: If the review describes ANY real experience with the physical product itself, it is LEGITIMATE — do not flag it, even if it's also angry about customer service, returns, or refunds."""
 
+USER_PROMPT_TEMPLATE = """Analyze each review below for Amazon TOS violations.
 
-def _call_groq(reviews: list[dict]) -> list[dict]:
-    """
-    Send a batch of reviews to Groq. Returns raw parsed JSON result list.
-    Retries once on rate limit (429).
-    """
-    # Build the user prompt
-    review_data = []
-    for r in reviews:
-        review_data.append({
+Respond with ONLY a valid JSON array. Each object must have:
+{{"id": <int>, "violates": <bool>, "type": <string or null>, "reason": <one sentence>, "confidence": <float 0.0-1.0>}}
+
+If a review does NOT violate, set violates=false, type=null, confidence=1.0.
+
+REVIEWS:
+{reviews_json}"""
+
+
+def _parse_llm_response(content: str) -> list[dict]:
+    """Strip markdown fences and parse JSON from LLM response."""
+    content = content.strip()
+    if content.startswith("```"):
+        lines = content.split("\n")
+        content = "\n".join(l for l in lines if not l.strip().startswith("```"))
+    return json.loads(content.strip())
+
+
+def _call_claude(reviews: list[dict]) -> list[dict]:
+    """Call Claude API (primary)."""
+    review_data = [
+        {
             "id":       r["id"],
             "rating":   r["rating"],
             "verified": r["is_verified_purchase"],
             "title":    (r.get("title") or "")[:200],
             "text":     (r.get("review_text") or "")[:1000],
-        })
+        }
+        for r in reviews
+    ]
 
-    user_prompt = (
-        "Analyze each review below for Amazon TOS violations.\n\n"
-        "Respond with ONLY a valid JSON array. Each object must have:\n"
-        '{"id": <int>, "violates": <bool>, "type": <string or null>, '
-        '"reason": <one sentence>, "confidence": <float 0.0-1.0>}\n\n'
-        "If a review does NOT violate, set violates=false, type=null, confidence=1.0.\n\n"
-        "REVIEWS:\n" + json.dumps(review_data, ensure_ascii=False)
-    )
+    body = {
+        "model":      CLAUDE_MODEL,
+        "max_tokens": 1500,
+        "system":     SYSTEM_PROMPT,
+        "messages": [
+            {
+                "role":    "user",
+                "content": USER_PROMPT_TEMPLATE.format(
+                    reviews_json=json.dumps(review_data, ensure_ascii=False)
+                ),
+            }
+        ],
+    }
+
+    for attempt in range(2):
+        try:
+            resp = requests.post(
+                CLAUDE_URL,
+                json=body,
+                headers={
+                    "x-api-key":         CLAUDE_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type":      "application/json",
+                },
+                timeout=60,
+            )
+
+            if resp.status_code == 429:
+                wait = int(resp.headers.get("Retry-After", 10))
+                log.warning(f"Claude rate limit hit, waiting {wait}s…")
+                time.sleep(wait + 1)
+                continue
+
+            resp.raise_for_status()
+            content = resp.json()["content"][0]["text"]
+            return _parse_llm_response(content)
+
+        except json.JSONDecodeError as e:
+            log.error(f"Claude returned invalid JSON (attempt {attempt+1}): {e}")
+            if attempt == 1:
+                return []
+        except Exception as e:
+            log.error(f"Claude API error (attempt {attempt+1}): {e}")
+            if attempt == 1:
+                return []
+            time.sleep(3)
+
+    return []
+
+
+def _call_groq(reviews: list[dict]) -> list[dict]:
+    """Call Groq API (fallback)."""
+    review_data = [
+        {
+            "id":       r["id"],
+            "rating":   r["rating"],
+            "verified": r["is_verified_purchase"],
+            "title":    (r.get("title") or "")[:200],
+            "text":     (r.get("review_text") or "")[:1000],
+        }
+        for r in reviews
+    ]
 
     body = {
         "model":       GROQ_MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": user_prompt},
+            {"role": "user",   "content": USER_PROMPT_TEMPLATE.format(
+                reviews_json=json.dumps(review_data, ensure_ascii=False)
+            )},
         ],
-        "max_tokens":  800,
-        "temperature": 0.1,   # low temperature = consistent, deterministic output
+        "max_tokens":  1500,
+        "temperature": 0.1,
     }
 
     for attempt in range(2):
         try:
-            resp = requests.post(GROQ_URL, json=body, headers=HEADERS, timeout=45)
+            resp = requests.post(
+                GROQ_URL,
+                json=body,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type":  "application/json",
+                },
+                timeout=45,
+            )
 
             if resp.status_code == 429:
                 wait = int(resp.headers.get("Retry-After", 12))
@@ -95,21 +178,11 @@ def _call_groq(reviews: list[dict]) -> list[dict]:
                 continue
 
             resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"].strip()
-
-            # Strip markdown fences if present
-            if content.startswith("```"):
-                lines = content.split("\n")
-                content = "\n".join(
-                    l for l in lines
-                    if not l.strip().startswith("```")
-                )
-
-            return json.loads(content.strip())
+            content = resp.json()["choices"][0]["message"]["content"]
+            return _parse_llm_response(content)
 
         except json.JSONDecodeError as e:
             log.error(f"Groq returned invalid JSON (attempt {attempt+1}): {e}")
-            log.debug(f"Raw content: {content[:500]}")
             if attempt == 1:
                 return []
         except Exception as e:
@@ -121,11 +194,29 @@ def _call_groq(reviews: list[dict]) -> list[dict]:
     return []
 
 
+def _call_llm(reviews: list[dict]) -> list[dict]:
+    """
+    Call LLM with automatic fallback.
+    Tries Claude first (higher limits), falls back to Groq.
+    """
+    if CLAUDE_API_KEY:
+        results = _call_claude(reviews)
+        if results:
+            return results
+        log.warning("Claude failed, falling back to Groq…")
+
+    if GROQ_API_KEY:
+        return _call_groq(reviews)
+
+    log.error("No LLM API key available — set CLAUDE_API_KEY or GROQ_API_KEY")
+    return []
+
+
 def check_reviews(reviews: list[dict]) -> list[dict]:
     """
     Check a list of review dicts for TOS violations.
 
-    Input: list of review rows from supabase_client.get_unchecked_reviews()
+    Input:  list of review rows from supabase_client.get_unchecked_reviews()
     Output: list of violation dicts ready for supabase_client.insert_compliance_flags()
 
     Violations below MIN_CONFIDENCE are silently dropped.
@@ -134,16 +225,14 @@ def check_reviews(reviews: list[dict]) -> list[dict]:
     total      = len(reviews)
     checked    = 0
 
-    # Process in batches
     for i in range(0, total, COMPLIANCE_BATCH_SIZE):
-        batch = reviews[i:i + COMPLIANCE_BATCH_SIZE]
-        results = _call_groq(batch)
+        batch   = reviews[i:i + COMPLIANCE_BATCH_SIZE]
+        results = _call_llm(batch)
 
-        # Map results back to review records
         result_by_id = {r["id"]: r for r in results}
 
         for review in batch:
-            rid = review["id"]
+            rid    = review["id"]
             result = result_by_id.get(rid)
 
             if not result:
@@ -152,25 +241,25 @@ def check_reviews(reviews: list[dict]) -> list[dict]:
 
             if result.get("violates") and result.get("confidence", 0) >= MIN_CONFIDENCE:
                 violations.append({
-                    "review_id":       rid,
-                    "asin":            review["asin"],
-                    "violation_type":  result.get("type", "UNKNOWN"),
-                    "reason":          result.get("reason", ""),
-                    "confidence":      result.get("confidence", 0.0),
-                    # Extra context for Google Sheets (not stored in DB, used in sheets_writer)
-                    "_author":         review.get("author", ""),
-                    "_title":          review.get("title", ""),
-                    "_text":           review.get("review_text", ""),
-                    "_rating":         review.get("rating"),
-                    "_date":           review.get("review_date", ""),
-                    "_verified":       review.get("is_verified_purchase"),
+                    "review_id":      rid,
+                    "asin":           review["asin"],
+                    "violation_type": result.get("type", "UNKNOWN"),
+                    "reason":         result.get("reason", ""),
+                    "confidence":     result.get("confidence", 0.0),
+                    # Extra context passed through to sheets_writer
+                    "_author":    review.get("author", ""),
+                    "_title":     review.get("title", ""),
+                    "_text":      review.get("review_text", ""),
+                    "_rating":    review.get("rating"),
+                    "_date":      review.get("review_date", ""),
+                    "_verified":  review.get("is_verified_purchase"),
                 })
 
         checked += len(batch)
         log.info(f"Compliance: {checked}/{total} checked, {len(violations)} violations so far")
 
-        # Brief pause between batches to be polite to Groq
+        # Small pause between batches
         if i + COMPLIANCE_BATCH_SIZE < total:
-            time.sleep(0.5)
+            time.sleep(0.3)
 
     return violations

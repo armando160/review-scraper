@@ -12,6 +12,10 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 GROQ_MODEL   = "llama-3.3-70b-versatile"
 
+# ── Claude API ───────────────────────────────────────────────────────────────
+CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")   # set in GitHub secrets
+CLAUDE_MODEL   = "claude-haiku-4-5-20251001"            # fast + cheap, ideal for classification
+
 # ── Monday.com ────────────────────────────────────────────────────────────────
 MONDAY_TOKEN       = os.environ["MONDAY_TOKEN"]
 MONDAY_BOARD_ID    = "8574487078"
@@ -33,7 +37,7 @@ DELAY_BETWEEN_ASINS = 2.5    # seconds between ASINs — polite to Woot
 SCRAPE_MODE         = "max"  # basic | full | max
 
 # ── Compliance ────────────────────────────────────────────────────────────────
-COMPLIANCE_BATCH_SIZE = 5     # reviews sent to Groq per API call
+COMPLIANCE_BATCH_SIZE = 10    # reviews sent per LLM API call (10 = ~20 calls per 200 reviews)
 MIN_CONFIDENCE        = 0.70  # only push to Google Sheet if confidence ≥ this
 
 # ── Scrape cadence by tier (hours between scrapes) ────────────────────────────
