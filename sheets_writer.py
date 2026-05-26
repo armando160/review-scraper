@@ -116,7 +116,7 @@ def _flag_to_row(flag: dict) -> list:
         date,                               # Review Date
         "Yes" if verified else "No",        # Verified Purchase
         title,                              # Review Title
-        (text or "")[:1000],               # Review Text
+        (text or ""),                       # Review Text (full text — Supabase stores complete)
         violation_type,                     # Primary Violation
         confidence,                         # Confidence
         llm_reasoning,                      # LLM Reasoning
