@@ -291,19 +291,62 @@ def insert_compliance_flags(flags: list[dict]) -> int:
 
 
 def get_unsent_flags(limit: int = 100) -> list[dict]:
-    """Return compliance flags not yet pushed to Google Sheets."""
-    rows = _get("compliance_flags", params={
-        "select": (
-            "id,asin,flag_reason,flag_details,confidence_score,"
-            "reviews(author,title,review_text,rating,review_date,is_verified_purchase),"
-            "products(product_name)"
-        ),
+    """
+    Return compliance flags not yet pushed to Google Sheets.
+    Uses two separate queries to avoid PostgREST join syntax issues.
+    """
+    # Step 1: get the flags
+    flags = _get("compliance_flags", params={
+        "select":         "id,asin,review_id,flag_reason,flag_details,confidence_score",
         "sent_to_sheets": "eq.false",
         "status":         "eq.pending",
         "order":          "created_at.asc",
         "limit":          str(limit),
     })
-    return rows
+
+    if not flags:
+        return []
+
+    # Step 2: enrich each flag with review + product data
+    review_ids  = list({f["review_id"] for f in flags if f.get("review_id")})
+    asin_list   = list({f["asin"] for f in flags if f.get("asin")})
+
+    # Fetch reviews
+    reviews_map = {}
+    if review_ids:
+        id_filter = "(" + ",".join(str(i) for i in review_ids) + ")"
+        review_rows = _get("reviews", params={
+            "select": "id,author,title,review_text,rating,review_date,is_verified_purchase",
+            "id":     f"in.{id_filter}",
+        })
+        reviews_map = {r["id"]: r for r in review_rows}
+
+    # Fetch product names
+    products_map = {}
+    if asin_list:
+        asin_filter = "(" + ",".join(f'"{a}"' for a in asin_list) + ")"
+        product_rows = _get("products", params={
+            "select": "asin,product_name",
+            "asin":   f"in.{asin_filter}",
+        })
+        products_map = {p["asin"]: p["product_name"] for p in product_rows}
+
+    # Merge into enriched flag dicts
+    enriched = []
+    for flag in flags:
+        review = reviews_map.get(flag.get("review_id"), {})
+        enriched.append({
+            **flag,
+            "_author":   review.get("author", ""),
+            "_title":    review.get("title", ""),
+            "_text":     review.get("review_text", ""),
+            "_rating":   review.get("rating"),
+            "_date":     review.get("review_date", ""),
+            "_verified": review.get("is_verified_purchase"),
+            "products":  {"product_name": products_map.get(flag.get("asin"), "")},
+        })
+
+    return enriched
 
 
 def mark_flags_sent(flag_ids: list[int]):
