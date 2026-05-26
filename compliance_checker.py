@@ -214,9 +214,7 @@ def _call_gemini(reviews: list[dict]) -> list[dict]:
     ]
 
     prompt = (
-        SYSTEM_PROMPT + "
-
-" +
+        SYSTEM_PROMPT + "\n\n" +
         USER_PROMPT_TEMPLATE.format(
             reviews_json=json.dumps(review_data, ensure_ascii=False)
         )
