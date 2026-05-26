@@ -218,8 +218,14 @@ def insert_reviews(asin: str, raw_reviews: list[dict]) -> int:
                 **HEADERS,
                 "Prefer": "resolution=ignore-duplicates,return=representation",
             },
+            params={"on_conflict": "review_key"},
             timeout=30,
         )
+        # 409 = all reviews already exist (shared review pool between variants)
+        # treat as 0 new reviews, not an error
+        if resp.status_code == 409:
+            log.debug(f"All reviews already exist for this batch (shared review pool)")
+            continue
         resp.raise_for_status()
         inserted = resp.json()
         new_total += len(inserted)
