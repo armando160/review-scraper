@@ -87,14 +87,25 @@ def run():
             log_id = supabase_client.log_scrape_start(asin, "max")
             reviews, summary = scraper.scrape_asin(asin)
             new_count = supabase_client.insert_reviews(asin, reviews)
+            # Always update scrape schedule — even 0 new reviews is a successful scrape
+            # (shared review pools between color variants will always show 0 new after first variant)
             supabase_client.update_product_after_scrape(asin, len(reviews), new_count, tier)
             if log_id:
                 supabase_client.log_scrape_finish(log_id, len(reviews), new_count)
             total_new += new_count
-            log.info(f"    ✓ {len(reviews)} scraped, {new_count} new reviews stored")
+            if new_count == 0:
+                log.info(f"    ✓ {len(reviews)} scraped, 0 new (shared review pool or already stored)")
+            else:
+                log.info(f"    ✓ {len(reviews)} scraped, {new_count} new reviews stored")
 
         except Exception as e:
             log.error(f"    ✗ Scrape failed for {asin}: {e}")
+            # Still update schedule on error so it doesn't retry immediately
+            # Use tier 4 interval (96h) as a backoff
+            try:
+                supabase_client.update_product_after_scrape(asin, 0, 0, tier=4)
+            except Exception:
+                pass
             if log_id:
                 try:
                     supabase_client.log_scrape_finish(log_id, 0, 0, error=str(e))
