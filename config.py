@@ -69,21 +69,21 @@ ACTIVE_STATUSES = {
 # Statuses that are high-priority for compliance (rating cutoff handled in tier assignment)
 COMPLIANCE_SKIP_STATUSES = {"To be launched"}
 
-# ── Sheet header (must match sheets_writer.py exactly) ────────────────────────
+# ── Sheet header (matches existing sheet columns exactly) ─────────────────────
 SHEET_HEADER = [
     "ASIN",
     "Product Name",
     "Amazon Product Link",
-    "Filtered Review Page",
+    "Reviews Page",
     "Reviewer",
     "Star Rating",
     "Review Date",
     "Verified Purchase",
     "Review Title",
     "Review Text",
-    "Violation Type",
-    "LLM Reasoning",
+    "Primary Violation",
     "Confidence",
+    "LLM Reasoning",
     "Report Status",
     "Date Submitted",
     "Outcome",

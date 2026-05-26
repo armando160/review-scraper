@@ -96,24 +96,34 @@ def _flag_to_row(flag: dict) -> list:
         f"https://www.amazon.com/product-reviews/{asin}"
     )
 
+    violation_type = flag.get("flag_reason") or flag.get("violation_type", "")
+    llm_reasoning  = flag.get("flag_details") or flag.get("reason", "")
+    confidence     = flag.get("confidence_score") or flag.get("confidence", "")
+
+    # Round confidence to 2 decimal places if numeric
+    try:
+        confidence = round(float(confidence), 2)
+    except (TypeError, ValueError):
+        confidence = ""
+
     return [
-        asin,
-        product_name,
-        f"https://www.amazon.com/dp/{asin}",
-        review_page,
-        author,
-        rating,
-        date,
-        "Yes" if verified else "No",
-        title,
-        (text or "")[:1000],   # truncate very long reviews
-        flag.get("flag_reason") or flag.get("violation_type", ""),
-        flag.get("flag_details") or flag.get("reason", ""),
-        flag.get("confidence_score") or flag.get("confidence", ""),
-        "Pending",  # Report Status
-        "",         # Date Submitted
-        "",         # Outcome
-        "",         # Notes
+        asin,                               # ASIN
+        product_name,                       # Product Name
+        f"https://www.amazon.com/dp/{asin}", # Amazon Product Link
+        review_page,                        # Reviews Page
+        author,                             # Reviewer
+        rating,                             # Star Rating
+        date,                               # Review Date
+        "Yes" if verified else "No",        # Verified Purchase
+        title,                              # Review Title
+        (text or "")[:1000],               # Review Text
+        violation_type,                     # Primary Violation
+        confidence,                         # Confidence
+        llm_reasoning,                      # LLM Reasoning
+        "Pending",                          # Report Status
+        "",                                 # Date Submitted
+        "",                                 # Outcome
+        "",                                 # Notes
     ]
 
 

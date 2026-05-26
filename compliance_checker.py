@@ -248,7 +248,8 @@ def _call_gemini(reviews: list[dict]) -> list[dict]:
             return _parse_llm_response(content)
 
         except json.JSONDecodeError as e:
-            log.error(f"Gemini returned invalid JSON (attempt {attempt+1}): {e}")
+            raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"] if resp else ""
+            log.error(f"Gemini invalid JSON (attempt {attempt+1}): {e} | raw: {raw[:300]}")
             if attempt == 1:
                 return []
         except Exception as e:
