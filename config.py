@@ -12,6 +12,11 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 GROQ_MODEL   = "llama-3.3-70b-versatile"
 
+# ── Gemini API ───────────────────────────────────────────────────────────────
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL   = "gemini-2.5-flash"
+GEMINI_URL     = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+
 # ── Claude API ───────────────────────────────────────────────────────────────
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")   # set in GitHub secrets
 CLAUDE_MODEL   = "claude-haiku-4-5-20251001"            # fast + cheap, ideal for classification

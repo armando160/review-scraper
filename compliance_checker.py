@@ -16,6 +16,7 @@ import requests
 from config import (
     GROQ_API_KEY, GROQ_MODEL,
     CLAUDE_API_KEY, CLAUDE_MODEL,
+    GEMINI_API_KEY, GEMINI_MODEL, GEMINI_URL,
     COMPLIANCE_BATCH_SIZE, MIN_CONFIDENCE,
 )
 
@@ -199,24 +200,93 @@ def _call_groq(reviews: list[dict]) -> list[dict]:
     return []
 
 
+def _call_gemini(reviews: list[dict]) -> list[dict]:
+    """Call Gemini API."""
+    review_data = [
+        {
+            "id":       r["id"],
+            "rating":   r["rating"],
+            "verified": r["is_verified_purchase"],
+            "title":    (r.get("title") or "")[:200],
+            "text":     (r.get("review_text") or "")[:1000],
+        }
+        for r in reviews
+    ]
+
+    prompt = (
+        SYSTEM_PROMPT + "
+
+" +
+        USER_PROMPT_TEMPLATE.format(
+            reviews_json=json.dumps(review_data, ensure_ascii=False)
+        )
+    )
+
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1500},
+    }
+
+    for attempt in range(2):
+        try:
+            resp = requests.post(
+                f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+                json=body,
+                headers={"Content-Type": "application/json"},
+                timeout=60,
+            )
+
+            if resp.status_code == 429:
+                wait = int(resp.headers.get("Retry-After", 10))
+                if wait > 30:
+                    log.warning(f"Gemini daily limit hit — skipping remaining reviews.")
+                    return []
+                log.warning(f"Gemini rate limit hit, waiting {wait}s…")
+                time.sleep(wait + 1)
+                continue
+
+            resp.raise_for_status()
+            content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            return _parse_llm_response(content)
+
+        except json.JSONDecodeError as e:
+            log.error(f"Gemini returned invalid JSON (attempt {attempt+1}): {e}")
+            if attempt == 1:
+                return []
+        except Exception as e:
+            log.error(f"Gemini API error (attempt {attempt+1}): {e}")
+            if attempt == 1:
+                return []
+            time.sleep(3)
+
+    return []
+
+
 def _call_llm(reviews: list[dict]) -> list[dict]:
     """
-    Call LLM with automatic fallback.
-    Tries Claude first (higher limits), falls back to Groq only if Claude unavailable.
-    Groq free tier exhausts daily limits quickly — Claude is strongly preferred.
+    Call LLM with automatic fallback chain:
+    1. Claude  — best limits on enterprise, preferred
+    2. Gemini  — 1,500 req/day free, fast
+    3. Groq    — last resort, low daily limits
+
+    Each is tried in order, skipped if key not set or call fails.
     """
     if CLAUDE_API_KEY:
         results = _call_claude(reviews)
         if results:
             return results
-        log.warning("Claude failed, falling back to Groq…")
-        return _call_groq(reviews)
+        log.warning("Claude failed, trying Gemini…")
 
-    # Groq-only mode: cap wait time to avoid hanging the pipeline
+    if GEMINI_API_KEY:
+        results = _call_gemini(reviews)
+        if results:
+            return results
+        log.warning("Gemini failed, trying Groq…")
+
     if GROQ_API_KEY:
         return _call_groq(reviews)
 
-    log.error("No LLM API key available — set CLAUDE_API_KEY or GROQ_API_KEY")
+    log.error("No LLM API key available — set CLAUDE_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY")
     return []
 
 
