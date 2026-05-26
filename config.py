@@ -12,6 +12,11 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 GROQ_MODEL   = "llama-3.3-70b-versatile"
 
+# ── OpenRouter ───────────────────────────────────────────────────────────────
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL   = "anthropic/claude-haiku-4-5"
+OPENROUTER_URL     = "https://openrouter.ai/api/v1/chat/completions"
+
 # ── Gemini API ───────────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL   = "gemini-2.5-flash"

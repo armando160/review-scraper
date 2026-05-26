@@ -17,6 +17,7 @@ from config import (
     GROQ_API_KEY, GROQ_MODEL,
     CLAUDE_API_KEY, CLAUDE_MODEL,
     GEMINI_API_KEY, GEMINI_MODEL, GEMINI_URL,
+    OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_URL,
     COMPLIANCE_BATCH_SIZE, MIN_CONFIDENCE,
 )
 
@@ -261,15 +262,86 @@ def _call_gemini(reviews: list[dict]) -> list[dict]:
     return []
 
 
+def _call_openrouter(reviews: list[dict]) -> list[dict]:
+    """Call OpenRouter API (OpenAI-compatible). Uses Claude Haiku by default."""
+    review_data = [
+        {
+            "id":       r["id"],
+            "rating":   r["rating"],
+            "verified": r["is_verified_purchase"],
+            "title":    (r.get("title") or "")[:200],
+            "text":     (r.get("review_text") or "")[:1000],
+        }
+        for r in reviews
+    ]
+
+    body = {
+        "model": OPENROUTER_MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user",   "content": USER_PROMPT_TEMPLATE.format(
+                reviews_json=json.dumps(review_data, ensure_ascii=False)
+            )},
+        ],
+        "max_tokens":  1500,
+        "temperature": 0.1,
+    }
+
+    for attempt in range(2):
+        try:
+            resp = requests.post(
+                OPENROUTER_URL,
+                json=body,
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type":  "application/json",
+                    "HTTP-Referer":  "https://github.com/armando160/review-scraper",
+                },
+                timeout=60,
+            )
+
+            if resp.status_code == 429:
+                wait = int(resp.headers.get("Retry-After", 10))
+                if wait > 30:
+                    log.warning(f"OpenRouter rate limit exceeded — skipping.")
+                    return []
+                log.warning(f"OpenRouter rate limit, waiting {wait}s…")
+                time.sleep(wait + 1)
+                continue
+
+            resp.raise_for_status()
+            content = resp.json()["choices"][0]["message"]["content"]
+            return _parse_llm_response(content)
+
+        except json.JSONDecodeError as e:
+            log.error(f"OpenRouter invalid JSON (attempt {attempt+1}): {e}")
+            if attempt == 1:
+                return []
+        except Exception as e:
+            log.error(f"OpenRouter API error (attempt {attempt+1}): {e}")
+            if attempt == 1:
+                return []
+            time.sleep(3)
+
+    return []
+
+
 def _call_llm(reviews: list[dict]) -> list[dict]:
     """
     Call LLM with automatic fallback chain:
-    1. Claude  — best limits on enterprise, preferred
-    2. Gemini  — 1,500 req/day free, fast
-    3. Groq    — last resort, low daily limits
+    1. OpenRouter (Claude Haiku) — primary, pay-per-use, no daily limits
+    2. Claude direct             — if you have an Anthropic key
+    3. Gemini                    — 1,500 req/day free
+    4. Groq                      — last resort, low daily limits
 
     Each is tried in order, skipped if key not set or call fails.
     """
+    if OPENROUTER_API_KEY:
+        results = _call_openrouter(reviews)
+        if results:
+            return results
+        log.warning("OpenRouter failed, trying Claude direct…")
+
     if CLAUDE_API_KEY:
         results = _call_claude(reviews)
         if results:
@@ -285,7 +357,7 @@ def _call_llm(reviews: list[dict]) -> list[dict]:
     if GROQ_API_KEY:
         return _call_groq(reviews)
 
-    log.error("No LLM API key available — set CLAUDE_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY")
+    log.error("No LLM API key available — set OPENROUTER_API_KEY, CLAUDE_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY")
     return []
 
 
