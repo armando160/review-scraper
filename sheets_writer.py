@@ -59,14 +59,15 @@ def _ensure_header(ws) -> int:
         log.info("Header row created")
         return 2  # next data row
 
-    # Check if first row matches expected header
+    # Check if first row matches expected header — fix it if not
     if all_values[0] != SHEET_HEADER:
         log.warning(
-            f"Sheet header mismatch!\n"
+            f"Sheet header mismatch — auto-correcting.\n"
             f"Expected: {SHEET_HEADER}\n"
-            f"Found:    {all_values[0]}\n"
-            f"Appending anyway — check column alignment."
+            f"Found:    {all_values[0]}"
         )
+        ws.update("A1", [SHEET_HEADER])
+        log.info("Header row corrected automatically.")
 
     return len(all_values) + 1
 

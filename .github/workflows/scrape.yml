@@ -46,11 +46,13 @@ jobs:
 
       - name: Run pipeline
         env:
-          SUPABASE_URL:    ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY:    ${{ secrets.SUPABASE_KEY }}
-          GROQ_API_KEY:    ${{ secrets.GROQ_API_KEY }}
-          MONDAY_TOKEN:    ${{ secrets.MONDAY_TOKEN }}
-          GOOGLE_SA_JSON:  ${{ secrets.GOOGLE_SA_JSON }}
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
+          MONDAY_TOKEN:       ${{ secrets.MONDAY_TOKEN }}
+          GOOGLE_SA_JSON:     ${{ secrets.GOOGLE_SA_JSON }}
         run: python pipeline.py
 
       - name: Upload logs on failure
