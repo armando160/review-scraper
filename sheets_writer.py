@@ -101,11 +101,17 @@ def _flag_to_row(flag: dict) -> list:
     llm_reasoning  = flag.get("flag_details") or flag.get("reason", "")
     confidence     = flag.get("confidence_score") or flag.get("confidence", "")
 
-    # Round confidence to 2 decimal places if numeric
+    # Convert numeric confidence to HIGH/MEDIUM/LOW label
     try:
-        confidence = round(float(confidence), 2)
+        conf_float = float(confidence)
+        if conf_float >= 0.90:
+            confidence = "HIGH"
+        elif conf_float >= 0.75:
+            confidence = "MEDIUM"
+        else:
+            confidence = "LOW"
     except (TypeError, ValueError):
-        confidence = ""
+        confidence = "MEDIUM"  # default if missing
 
     return [
         asin,                               # ASIN
